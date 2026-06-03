@@ -1,0 +1,30 @@
+private Claims extraAllClaims(TokenType tokenType,String token) throws JwtAuthenticationException {
+        try {
+            return Jwts.parserBuilder()
+                    .setSigningKey(typeToString(tokenType))
+                    .build()
+                    .parseClaimsJws(token)
+                    .getBody();
+        } catch (RuntimeException e) {
+            throw new JwtAuthenticationException("error:" + e.getMessage());
+        }
+    }
+    đoạn code này phải thật chú ý vì nếu token hết hạn nó cx sẽ bị lỗi và throw ra làm api stop nếu muốn hết hạn mà api vẫn phải chạy thì phải try catch
+
+docker compose up -d build container trên image sẵn có
+docker compose down -v xóa container,volumn
+docker compose down tắt xóa container
+docker compose stop or docker compose --profile docker-app down dừng container
+# Bước 1: Build JAR
+mvn clean package -DskipTests
+
+# Bước 2: Build Docker image
+docker build -t spring-app:latest .
+
+# Bước 3: Chạy hạ tầng (kafka, mysql, elk, prometheus...)
+docker compose up -d
+
+# Bước 4: Chạy app
+docker compose --profile docker-app up -d
+
+

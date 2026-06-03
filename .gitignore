@@ -1,0 +1,16 @@
+# Environment
+.env
+
+# IDE
+.idea/
+*.iml
+
+# Maven build
+target/
+
+# Thư mục runtime
+temp/
+uploads/
+
+# Ghi chú cá nhân
+note.txt

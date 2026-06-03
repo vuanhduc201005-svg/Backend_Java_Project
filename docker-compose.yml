@@ -1,0 +1,384 @@
+services:
+
+  # =========================================
+  # SPRING BOOT APP
+  # =========================================
+  app:
+    image: spring-app:latest
+
+    container_name: spring-app
+
+    ports:
+      - "8080:8080"
+
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_NAME: ${DB_NAME}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM: ${MAIL_FROM}
+      JWT_ACCESS_KEY: ${JWT_ACCESS_KEY}
+      JWT_REFRESH_KEY: ${JWT_REFRESH_KEY}
+      JWT_REGISTER_KEY: ${JWT_REGISTER_KEY}
+      JWT_FORGOT_KEY: ${JWT_FORGOT_KEY}
+      SYSTEM_USERNAME: ${SYSTEM_USERNAME}
+      SYSTEM_PASSWORD: ${SYSTEM_PASSWORD}
+      SYSTEM_EMAIL: ${SYSTEM_EMAIL}
+      GRAFANA_PASSWORD: ${GRAFANA_PASSWORD}
+      FILE_UPLOAD_PATH: /app/uploads
+      FILE_TEMP_PATH: /app/temp
+
+    volumes:
+      - uploads_data:/app/uploads
+      - temp_data:/app/temp
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      logstash:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+    profiles:
+      - docker-app
+
+  # =========================================
+  # MYSQL
+  # =========================================
+  mysql:
+    image: mysql:8.0
+
+    container_name: mysql
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+
+    ports:
+      - "3307:3306"
+
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # REDIS
+  # =========================================
+  redis:
+    image: redis:7.2-alpine
+
+    container_name: redis
+
+    ports:
+      - "6379:6379"
+
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+  # =========================================
+  # ZOOKEEPER
+  # =========================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+
+    container_name: zookeeper
+
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+    volumes:
+     - zookeeper_data:/var/lib/zookeeper/data
+     - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "localhost", "2181" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # KAFKA
+  # =========================================
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+
+    container_name: kafka
+
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+    healthcheck:
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092" ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # KAFKA UI
+  # =========================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+
+    container_name: kafka-ui
+
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+    ports:
+      - "8989:8080"
+
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # ELASTICSEARCH
+  # =========================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+
+    container_name: elasticsearch
+
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=elk-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:9200 || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # LOGSTASH
+  # =========================================
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.13.0
+
+    container_name: logstash
+
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+    volumes:
+      - ./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - ./logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+
+    ports:
+      - "5044:5044"
+      - "5000:5000"
+      - "9600:9600"
+
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx256m
+
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -sf http://localhost:9600 || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # KIBANA
+  # =========================================
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+
+    container_name: kibana
+
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+    ports:
+      - "5601:5601"
+
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # PROMETHEUS
+  # =========================================
+  prometheus:
+    image: prom/prometheus:v2.51.0
+
+    container_name: prometheus
+
+    ports:
+      - "9090:9090"
+
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+  # =========================================
+  # GRAFANA
+  # =========================================
+  grafana:
+    image: grafana/grafana:10.4.0
+
+    container_name: grafana
+
+    depends_on:
+      - prometheus
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+# =========================================
+# VOLUMES
+# =========================================
+volumes:
+  mysql_data:
+  redis_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_log:
+  es_data:
+  prometheus_data:
+  grafana_data:
+  uploads_data:
+  temp_data:
+# =========================================
+# NETWORK
+# =========================================
+networks:
+  backend:
+    driver: bridge
